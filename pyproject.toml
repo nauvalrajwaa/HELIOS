@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "organelle-isomer-pipeline"
+version = "0.1.0"
+description = "Organelle heteroplasmy and structural isomer quantification pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "plotly>=5.0.0",
+  "pysam>=0.22.0",
+]
+
+[project.scripts]
+organelle-pipeline = "organelle_pipeline.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["organelle_pipeline*"]

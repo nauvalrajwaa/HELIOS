@@ -1,0 +1,25 @@
+
+Make new pipeline
+
+[1]
+Organelle Heteroplasmy & Isomer Quantifier
+Gap: Tools assembly memaksakan satu jalur graf perakitan menjadi satu sekuens sirkuler, membuang informasi berharga tentang molekul sub-stoikiometrik (isomer) atau mutasi spesifik (heteroplasmi) yang bisa berdampak pada fenotipe (misal: penyakit mitokondria atau adaptasi stres tanaman).
+
+Solusi Proyek: Pipeline yang memetakan kembali (remap) raw reads ke hasil assembly organel, lalu secara otomatis mendeteksi, mengkuantifikasi, dan memvisualisasikan proporsi varian struktural (seperti inversi wilayah Small Single Copy di kloroplas) dan heteroplasmi SNP/Indel.
+
+Fitur Kunci: Menghasilkan grafik batang yang menunjukkan persentase isomer A vs Isomer B, serta laporan variasi nukleotida yang lolos dari assembly konsensus.
+
+Tech Stack: Python, BWA-MEM/Minimap2, pysam, Plotly untuk visualisasi dinamis.
+
+[2]
+make report html for results
+
+[3]
+available inputs:
+1. fasta circular
+2. gff3 or gbk
+3. fastq raw
+
+[4]
+expected additional output
+1. isomeric graph gfa 
