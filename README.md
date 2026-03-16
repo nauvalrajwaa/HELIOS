@@ -1,4 +1,6 @@
-# Organelle Heteroplasmy and Isomer Pipeline
+# HELIOS: HEteroplasmy and Isomer Locator for Organelle Sequences
+
+HELIOS is a lightweight analysis workflow for organelle sequencing data that quantifies heteroplasmic variants and structural isomer proportions directly from raw reads, then packages results into tabular outputs and an interactive report for fast interpretation.
 
 This project provides a Python pipeline to:
 
@@ -34,7 +36,7 @@ pip install -e .
 ## Run
 
 ```bash
-organelle-pipeline \
+helios \
   --fasta data/organelle.fasta \
   --annotation data/annotation.gff3 \
   --fastq data/reads_R1.fastq.gz data/reads_R2.fastq.gz \

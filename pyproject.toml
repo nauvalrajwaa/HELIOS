@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "organelle-isomer-pipeline"
+name = "HELIOS"
 version = "0.1.0"
-description = "Organelle heteroplasmy and structural isomer quantification pipeline"
+description = "HELIOS: HEteroplasmy and Isomer Locator for Organelle Sequences"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,7 +14,14 @@ dependencies = [
 ]
 
 [project.scripts]
+helios = "organelle_pipeline.__main__:main"
 organelle-pipeline = "organelle_pipeline.__main__:main"
+
+[tool.executor.schemes.main]
+cmd = "python main.py"
+
+[tool.executor.schemes.pipeline]
+cmd = "python organelle_pipeline/pipeline.py"
 
 [tool.setuptools.packages.find]
 where = ["."]

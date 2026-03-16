@@ -123,3 +123,9 @@ def _validate_inputs(config: PipelineConfig) -> None:
         raise ValueError("kmer_size must be >= 11 for stable isomer voting")
     if config.min_depth < 1:
         raise ValueError("min_depth must be >= 1")
+
+
+if __name__ == "__main__":
+    from organelle_pipeline.__main__ import main
+
+    raise SystemExit(main())

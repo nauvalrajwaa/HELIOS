@@ -7,8 +7,8 @@ from organelle_pipeline.pipeline import run_pipeline
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="organelle-pipeline",
-        description="Quantify organelle heteroplasmy and structural isomer proportions",
+        prog="helios",
+        description="HELIOS: HEteroplasmy and Isomer Locator for Organelle Sequences",
     )
     parser.add_argument("--fasta", type=Path, required=True, help="Circular organelle FASTA")
     parser.add_argument("--annotation", type=Path, default=None, help="Optional GFF3 or GBK annotation")
