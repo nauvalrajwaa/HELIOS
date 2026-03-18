@@ -1,0 +1,29 @@
+{
+  "sample_name": "D1",
+  "bam_path": null,
+  "heteroplasmy_call_count": 0,
+  "isomer": {
+    "isomer_a_name": "contig_1_circular_A",
+    "isomer_b_name": "contig_1_circular_B",
+    "assigned_a": 0,
+    "assigned_b": 0,
+    "ambiguous": 0,
+    "unassigned": 0,
+    "total_reads_seen": 0,
+    "isomer_a_fraction": 0.0,
+    "isomer_b_fraction": 0.0,
+    "method": "assembly_only_candidates",
+    "assumptions": [
+      "No FASTQ reads were supplied, so HELIOS reported candidate plastome isomers without read-backed proportions.",
+      "Single FASTA record detected and SSC annotation not found; Isomer B approximated by inverting the middle 30% segment.",
+      "This fallback supports comparative structural quantification but should be replaced by curated isomer references when available."
+    ]
+  },
+  "output_files": {
+    "html_report": "runs/plastome/D1/report/report.html",
+    "gfa_graph": "runs/plastome/D1/results/isomer_graph.gfa",
+    "heteroplasmy_tsv": "runs/plastome/D1/results/heteroplasmy.tsv",
+    "isomer_tsv": "runs/plastome/D1/results/isomer_proportions.tsv",
+    "summary_json": "runs/plastome/D1/results/summary.json"
+  }
+}

@@ -1,0 +1,6 @@
+H	VN:Z:1.0	CL:Z:assembly_only_candidates
+S	contig_1_circular_A	*
+S	contig_1_circular_B	*
+L	contig_1_circular_A	+	contig_1_circular_B	+	0M
+L	contig_1_circular_B	+	contig_1_circular_A	+	0M
+P	IsomerPath	contig_1_circular_A+,contig_1_circular_B+	*
