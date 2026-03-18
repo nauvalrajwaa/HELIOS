@@ -105,16 +105,21 @@ def quantify_isomers_from_fastq(
 
 def write_isomer_gfa(path: Path, isomer_result: IsomerQuantResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    a_pct = round(isomer_result.isomer_a_fraction * 100.0, 4)
-    b_pct = round(isomer_result.isomer_b_fraction * 100.0, 4)
     with path.open("w", encoding="utf-8") as handle:
-        handle.write("H\tVN:Z:1.0\n")
-        handle.write(
-            f"S\t{isomer_result.isomer_a_name}\t*\tRC:i:{isomer_result.assigned_a}\tPR:f:{a_pct}\n"
-        )
-        handle.write(
-            f"S\t{isomer_result.isomer_b_name}\t*\tRC:i:{isomer_result.assigned_b}\tPR:f:{b_pct}\n"
-        )
+        if isomer_result.method == "assembly_only_candidates":
+            handle.write("H\tVN:Z:1.0\tCL:Z:assembly_only_candidates\n")
+            handle.write(f"S\t{isomer_result.isomer_a_name}\t*\n")
+            handle.write(f"S\t{isomer_result.isomer_b_name}\t*\n")
+        else:
+            a_pct = round(isomer_result.isomer_a_fraction * 100.0, 4)
+            b_pct = round(isomer_result.isomer_b_fraction * 100.0, 4)
+            handle.write("H\tVN:Z:1.0\n")
+            handle.write(
+                f"S\t{isomer_result.isomer_a_name}\t*\tRC:i:{isomer_result.assigned_a}\tPR:f:{a_pct}\n"
+            )
+            handle.write(
+                f"S\t{isomer_result.isomer_b_name}\t*\tRC:i:{isomer_result.assigned_b}\tPR:f:{b_pct}\n"
+            )
         handle.write(
             f"L\t{isomer_result.isomer_a_name}\t+\t{isomer_result.isomer_b_name}\t+\t0M\n"
         )

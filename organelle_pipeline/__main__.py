@@ -12,7 +12,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--fasta", type=Path, required=True, help="Circular organelle FASTA")
     parser.add_argument("--annotation", type=Path, default=None, help="Optional GFF3 or GBK annotation")
-    parser.add_argument("--fastq", type=Path, nargs="+", required=True, help="Raw FASTQ file(s)")
+    parser.add_argument(
+        "--fastq",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="Optional raw FASTQ file(s) for read-backed isomer quantification and heteroplasmy calling",
+    )
     parser.add_argument("--output", type=Path, required=True, help="Output directory")
     parser.add_argument("--sample-name", type=str, default="sample", help="Sample name for output naming")
     parser.add_argument("--aligner", choices=["auto", "bwa", "minimap2"], default="auto")
@@ -47,7 +53,7 @@ def main() -> int:
     config = PipelineConfig(
         fasta=args.fasta,
         annotation=args.annotation,
-        fastq_files=args.fastq,
+        fastq_files=args.fastq or [],
         output_dir=args.output,
         sample_name=args.sample_name,
         aligner=args.aligner,

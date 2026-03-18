@@ -6,6 +6,7 @@ from organelle_pipeline.isomer import quantify_isomers_from_fastq
 from organelle_pipeline.isomer import write_isomer_gfa
 from organelle_pipeline.mapping import choose_aligner
 from organelle_pipeline.mapping import run_mapping
+from organelle_pipeline.models import IsomerQuantResult
 from organelle_pipeline.models import PipelineConfig
 from organelle_pipeline.models import PipelineResult
 from organelle_pipeline.parsers import estimate_read_length
@@ -20,8 +21,10 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     _validate_inputs(config)
 
     fasta_records = read_fasta_records(config.fasta)
-    average_read_length = estimate_read_length(config.fastq_files, limit=config.read_limit_for_stats)
-    aligner = choose_aligner(config.aligner, average_read_length)
+    aligner = "auto"
+    if config.fastq_files:
+        average_read_length = estimate_read_length(config.fastq_files, limit=config.read_limit_for_stats)
+        aligner = choose_aligner(config.aligner, average_read_length)
 
     alignments_dir = config.output_dir / "alignments"
     results_dir = config.output_dir / "results"
@@ -31,7 +34,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     report_dir.mkdir(parents=True, exist_ok=True)
 
     bam_path: Path | None = None
-    if not config.skip_mapping:
+    if config.fastq_files and not config.skip_mapping:
         bam_path = alignments_dir / f"{config.sample_name}.sorted.bam"
         run_mapping(
             aligner=aligner,
@@ -53,18 +56,21 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
         )
     else:
         heteroplasmy_calls = []
-
+    
     ssc_region = infer_ssc_region(config.annotation)
     isomer_a, isomer_b, assumptions = build_isomer_candidates(fasta_records, ssc_region)
-    isomer_result = quantify_isomers_from_fastq(
-        fastq_files=config.fastq_files,
-        isomer_a=isomer_a,
-        isomer_b=isomer_b,
-        kmer_size=config.kmer_size,
-        min_hits=config.min_isomer_hits,
-        read_limit=config.read_limit_for_isomer,
-        assumptions=assumptions,
-    )
+    if config.fastq_files:
+        isomer_result = quantify_isomers_from_fastq(
+            fastq_files=config.fastq_files,
+            isomer_a=isomer_a,
+            isomer_b=isomer_b,
+            kmer_size=config.kmer_size,
+            min_hits=config.min_isomer_hits,
+            read_limit=config.read_limit_for_isomer,
+            assumptions=assumptions,
+        )
+    else:
+        isomer_result = _build_assembly_only_result(isomer_a, isomer_b, assumptions)
 
     heteroplasmy_tsv = results_dir / "heteroplasmy.tsv"
     isomer_tsv = results_dir / "isomer_proportions.tsv"
@@ -79,7 +85,7 @@ def run_pipeline(config: PipelineConfig) -> PipelineResult:
     )
     write_tsv(
         isomer_tsv,
-        rows=[isomer_result.to_row()],
+        rows=[_isomer_row(isomer_result)],
         headers=[
             "isomer_a",
             "isomer_b",
@@ -123,6 +129,47 @@ def _validate_inputs(config: PipelineConfig) -> None:
         raise ValueError("kmer_size must be >= 11 for stable isomer voting")
     if config.min_depth < 1:
         raise ValueError("min_depth must be >= 1")
+
+
+def _build_assembly_only_result(
+    isomer_a: tuple[str, str],
+    isomer_b: tuple[str, str],
+    assumptions: list[str],
+) -> IsomerQuantResult:
+    return IsomerQuantResult(
+        isomer_a_name=isomer_a[0],
+        isomer_b_name=isomer_b[0],
+        assigned_a=0,
+        assigned_b=0,
+        ambiguous=0,
+        unassigned=0,
+        total_reads_seen=0,
+        isomer_a_fraction=0.0,
+        isomer_b_fraction=0.0,
+        method="assembly_only_candidates",
+        assumptions=[
+            "No FASTQ reads were supplied, so HELIOS reported candidate plastome isomers without read-backed proportions.",
+            *assumptions,
+        ],
+    )
+
+
+def _isomer_row(isomer_result: IsomerQuantResult) -> dict[str, str]:
+    if isomer_result.method == "assembly_only_candidates":
+        return {
+            "isomer_a": isomer_result.isomer_a_name,
+            "isomer_b": isomer_result.isomer_b_name,
+            "assigned_a": "NA",
+            "assigned_b": "NA",
+            "ambiguous": "NA",
+            "unassigned": "NA",
+            "total_reads_seen": "NA",
+            "isomer_a_fraction": "NA",
+            "isomer_b_fraction": "NA",
+            "method": isomer_result.method,
+        }
+    row = isomer_result.to_row()
+    return {key: str(value) for key, value in row.items()}
 
 
 if __name__ == "__main__":

@@ -16,24 +16,55 @@ def write_html_report(
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    isomer_fig = go.Figure(
-        data=[
-            go.Bar(
-                x=[isomer_result.isomer_a_name, isomer_result.isomer_b_name],
-                y=[
-                    isomer_result.isomer_a_fraction * 100.0,
-                    isomer_result.isomer_b_fraction * 100.0,
-                ],
-                marker_color=["#1f77b4", "#ff7f0e"],
-            )
+    assembly_only = isomer_result.method == "assembly_only_candidates"
+    isomer_section_heading = "Isomer Candidate Summary" if assembly_only else "Isomer Proportion Plot"
+    report_heading = "HELIOS Plastome Assembly Evaluation" if assembly_only else "HELIOS Heteroplasmy & Isomer Quantification"
+    mode_note = (
+        "<p><strong>Mode:</strong> Assembly-only evaluation. No FASTQ reads were supplied, so HELIOS reports candidate plastome isomers without read-backed proportions or heteroplasmy calls.</p>"
+        if assembly_only
+        else "<p><strong>Mode:</strong> Read-backed analysis with isomer quantification and optional heteroplasmy calling.</p>"
+    )
+
+    if assembly_only:
+        isomer_div = (
+            "<div class=\"empty\">"
+            f"<p><strong>Candidate A:</strong> {escape(isomer_result.isomer_a_name)}</p>"
+            f"<p><strong>Candidate B:</strong> {escape(isomer_result.isomer_b_name)}</p>"
+            "<p>Read-backed isomer proportions are unavailable in assembly-only mode.</p>"
+            "</div>"
+        )
+        metrics = [
+            ("Evaluation Mode", "Assembly-only"),
+            ("Candidate Isomers", "2"),
+            ("Reads Processed", "N/A"),
+            ("Heteroplasmy Calls", "N/A"),
         ]
-    )
-    isomer_fig.update_layout(
-        title="Isomer Proportions",
-        xaxis_title="Isomer",
-        yaxis_title="Percent of informative reads",
-        yaxis_range=[0, 100],
-    )
+    else:
+        isomer_fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=[isomer_result.isomer_a_name, isomer_result.isomer_b_name],
+                    y=[
+                        isomer_result.isomer_a_fraction * 100.0,
+                        isomer_result.isomer_b_fraction * 100.0,
+                    ],
+                    marker_color=["#1f77b4", "#ff7f0e"],
+                )
+            ]
+        )
+        isomer_fig.update_layout(
+            title="Isomer Proportions",
+            xaxis_title="Isomer",
+            yaxis_title="Percent of informative reads",
+            yaxis_range=[0, 100],
+        )
+        isomer_div = plot(isomer_fig, include_plotlyjs="cdn", output_type="div")
+        metrics = [
+            ("Informative Isomer Reads", str(isomer_result.assigned_a + isomer_result.assigned_b)),
+            ("Ambiguous Reads", str(isomer_result.ambiguous)),
+            ("Unassigned Reads", str(isomer_result.unassigned)),
+            ("Heteroplasmy Calls", str(len(heteroplasmy_calls))),
+        ]
 
     variant_fig = go.Figure()
     if heteroplasmy_calls:
@@ -55,21 +86,21 @@ def write_html_report(
         yaxis_title="Alt allele fraction (%)",
     )
 
-    isomer_div = plot(isomer_fig, include_plotlyjs="cdn", output_type="div")
-    variant_div = plot(variant_fig, include_plotlyjs=False, output_type="div")
-
-    assumptions_html = "".join(
-        f"<li>{escape(item)}</li>" for item in isomer_result.assumptions
+    variant_div = plot(variant_fig, include_plotlyjs=not assembly_only, output_type="div")
+    metrics_html = "".join(
+        f'<div class="tile"><div>{escape(label)}</div><div class="value">{escape(value)}</div></div>'
+        for label, value in metrics
     )
-    variant_table = _variant_table(heteroplasmy_calls)
+    assumptions_html = "".join(f"<li>{escape(item)}</li>" for item in isomer_result.assumptions)
+    variant_table = _variant_table(heteroplasmy_calls, assembly_only=assembly_only)
 
     html = f"""
 <!DOCTYPE html>
-<html lang=\"en\">
+<html lang="en">
   <head>
-    <meta charset=\"UTF-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>Organelle Pipeline Report - {escape(sample_name)}</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HELIOS Report - {escape(sample_name)}</title>
     <style>
       body {{ font-family: "IBM Plex Sans", "Segoe UI", sans-serif; background: linear-gradient(180deg, #f4f8fb 0%, #e7eff7 100%); margin: 0; color: #0f172a; }}
       main {{ max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }}
@@ -81,25 +112,22 @@ def write_html_report(
       .kpi {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }}
       .tile {{ background: #f8fafc; border: 1px solid #dbeafe; border-radius: 12px; padding: 10px; }}
       .tile .value {{ font-size: 1.25rem; font-weight: 700; }}
+      .empty {{ border: 1px dashed #94a3b8; border-radius: 12px; padding: 16px; background: #f8fafc; }}
     </style>
   </head>
   <body>
     <main>
-      <h1>Organelle Heteroplasmy & Isomer Quantification</h1>
+      <h1>{report_heading}</h1>
       <p><strong>Sample:</strong> {escape(sample_name)}</p>
+      {mode_note}
 
       <section>
         <h2>Run Metrics</h2>
-        <div class=\"kpi\">
-          <div class=\"tile\"><div>Informative Isomer Reads</div><div class=\"value\">{isomer_result.assigned_a + isomer_result.assigned_b}</div></div>
-          <div class=\"tile\"><div>Ambiguous Reads</div><div class=\"value\">{isomer_result.ambiguous}</div></div>
-          <div class=\"tile\"><div>Unassigned Reads</div><div class=\"value\">{isomer_result.unassigned}</div></div>
-          <div class=\"tile\"><div>Heteroplasmy Calls</div><div class=\"value\">{len(heteroplasmy_calls)}</div></div>
-        </div>
+        <div class="kpi">{metrics_html}</div>
       </section>
 
       <section>
-        <h2>Isomer Proportion Plot</h2>
+        <h2>{isomer_section_heading}</h2>
         {isomer_div}
       </section>
 
@@ -125,7 +153,9 @@ def write_html_report(
     path.write_text(html, encoding="utf-8")
 
 
-def _variant_table(calls: list[VariantCall]) -> str:
+def _variant_table(calls: list[VariantCall], assembly_only: bool = False) -> str:
+    if assembly_only:
+        return "<p>Heteroplasmy calling is disabled in assembly-only mode.</p>"
     if not calls:
         return "<p>No heteroplasmy variants passed thresholds.</p>"
     rows = []
