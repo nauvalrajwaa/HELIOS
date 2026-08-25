@@ -1,0 +1,5 @@
+sample	contig	contig_length	ir_a_start	ir_a_end	ir_a_length	ir_b_start	ir_b_end	ir_b_length	ssc_start	ssc_end	ssc_length	lsc_length	source	notes
+C2	contig_1_circular	158855	54508	78978	24470	98375	122811	24436	78978	98375	19397	90552	auto_detected	coordinates sum to contig length
+D1_mq50	contig_1_circular	142917	NA	NA	NA	NA	NA	NA	NA	NA	NA	NA	undetermined	no credible IR pair detected; supply --ssc-start/--ssc-end manually; only 0 inverted-repeat arm(s) detected; cannot derive SSC boundaries
+MELOD1_mq60	contig_1_circular	155999	144512	14307	25794	100632	126427	25795	126427	144512	18085	86325	auto_detected	coordinates sum to contig length
+STB1	contig_1_circular	155568	0	25935	25935	111487	137423	25936	137423	155568	18145	85552	auto_detected	coordinates sum to contig length
