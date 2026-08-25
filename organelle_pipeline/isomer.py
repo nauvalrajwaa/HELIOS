@@ -1,181 +1,359 @@
-from pathlib import Path
+"""Isomer construction and read-backed quantification.
+
+Two complementary estimators are provided:
+
+``quantify_isomers_by_remapping``
+    Primary estimator. Reads are mapped against BOTH isomer references; the
+    orientation of alignments falling inside the SSC core discriminates which
+    structural isoform each read originated from (a read whose molecule
+    carries the flipped SSC aligns antisense to the A reference inside the
+    SSC, and sense to the B reference). Junction-spanning reads are excluded
+    via a buffer so only unambiguous molecules vote.
+
+``quantify_isomers_from_fastq``
+    Secondary cross-check. Unique k-mer voting between the two isomer
+    sequences (kept from HELIOS v0.1).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 
 from organelle_pipeline.models import IsomerQuantResult
 from organelle_pipeline.parsers import read_fastq_sequences
+from organelle_pipeline.repeats import IrDetection, invert_segment
 from organelle_pipeline.utils import reverse_complement
+
+
+@dataclass(slots=True)
+class IsomerPair:
+    """Isomer A/B sequences plus provenance of the SSC definition."""
+
+    name_a: str
+    sequence_a: str
+    name_b: str
+    sequence_b: str
+    ssc_start: int | None = None  # 0-based inclusive on the A frame (may wrap)
+    ssc_end: int | None = None  # 0-based exclusive on the A frame (may wrap)
+    ssc_source: str = "unknown"  # user_override | annotation | auto_detected | two_record
+    assumptions: list[str] = field(default_factory=list)
+    contig_name: str | None = None  # original record name for dual-reference remapping
 
 
 def build_isomer_candidates(
     fasta_records: list[tuple[str, str]],
-    ssc_region: tuple[int, int] | None,
-) -> tuple[tuple[str, str], tuple[str, str], list[str]]:
+    ssc_region: tuple[int, int] | None = None,
+    ssc_source: str = "annotation",
+    detection: IrDetection | None = None,
+) -> IsomerPair:
+    """Construct the isomer pair from an assembly.
+
+    Priority: explicit ``ssc_region`` (CLI override / curated annotation) >
+    auto-detected IR boundaries (``detection``) > two-record FASTA shortcut.
+    Raises ``ValueError`` with actionable guidance when nothing applies.
+    """
+    if not fasta_records:
+        raise ValueError("no FASTA records supplied")
+
     if len(fasta_records) >= 2:
-        assumptions = [
-            "Two or more FASTA records detected; first two records treated as Isomer A and Isomer B candidates.",
-            "Isomer quantification uses record-specific unique k-mers.",
-        ]
-        return fasta_records[0], fasta_records[1], assumptions
+        (name_a, seq_a), (name_b, seq_b) = fasta_records[0], fasta_records[1]
+        return IsomerPair(
+            name_a=name_a,
+            sequence_a=seq_a,
+            name_b=name_b,
+            sequence_b=seq_b,
+            ssc_start=None,
+            ssc_end=None,
+            ssc_source="two_record",
+            assumptions=[
+                "Two or more FASTA records detected; first two treated as Isomer A and B.",
+                "Orientation-based remapping unavailable without SSC coordinates; "
+                "k-mer voting used instead.",
+            ],
+        )
 
     name, sequence = fasta_records[0]
-    if ssc_region:
-        start_1, end_1 = ssc_region
-        start = max(0, start_1 - 1)
-        end = min(len(sequence), end_1)
-        if start < end:
-            isomer_b_sequence = _invert_segment(sequence, start, end)
-            assumptions = [
-                f"Single FASTA record detected; inferred SSC region {start_1}-{end_1} from annotation and created Isomer B by inversion.",
-                "Isomer quantification uses unique k-mers from Isomer A and inferred Isomer B.",
-            ]
-            return (f"{name}_A", sequence), (f"{name}_B", isomer_b_sequence), assumptions
+    n = len(sequence)
 
-    segment_start = int(len(sequence) * 0.35)
-    segment_end = int(len(sequence) * 0.65)
-    isomer_b_sequence = _invert_segment(sequence, segment_start, segment_end)
-    assumptions = [
-        "Single FASTA record detected and SSC annotation not found; Isomer B approximated by inverting the middle 30% segment.",
-        "This fallback supports comparative structural quantification but should be replaced by curated isomer references when available.",
-    ]
-    return (f"{name}_A", sequence), (f"{name}_B", isomer_b_sequence), assumptions
+    # ---- explicit region (user override or curated annotation) -------------
+    if ssc_region:
+        start, end = ssc_region
+        start = max(0, int(start))
+        end = min(n, int(end))
+        if end - start < max(200, n // 40):
+            raise ValueError(
+                f"SSC region {start}-{end} too small ({end - start} bp) for contig of {n} bp"
+            )
+        isomer_b_sequence = invert_segment(sequence, start, end)
+        return IsomerPair(
+            name_a=f"{name}_A",
+            contig_name=name,
+            sequence_a=sequence,
+            name_b=f"{name}_B",
+            sequence_b=isomer_b_sequence,
+            ssc_start=start,
+            ssc_end=end,
+            ssc_source=ssc_source,
+            assumptions=[
+                f"SSC region {start}-{end} ({ssc_source}) inverted to build Isomer B.",
+            ],
+        )
+
+    # ---- auto-detected inverted repeat boundaries --------------------------
+    if detection is not None and detection.ok and detection.ssc_start is not None:
+        start, end = detection.ssc_start, detection.ssc_end
+        isomer_b_sequence = invert_segment(sequence, start, end)
+        notes = [
+            f"SSC region [{start}, {end}) derived from self-detected inverted repeats "
+            "(IRA/IRB); Isomer B built by inverting this arc."
+        ]
+        for warning in detection.warnings:
+            notes.append(f"IR detection warning: {warning}")
+        return IsomerPair(
+            name_a=f"{name}_A",
+            contig_name=name,
+            sequence_a=sequence,
+            name_b=f"{name}_B",
+            sequence_b=isomer_b_sequence,
+            ssc_start=start,
+            ssc_end=end,
+            ssc_source="auto_detected",
+            assumptions=notes,
+        )
+
+    raise ValueError(
+        "Could not determine SSC boundaries for a single-record assembly "
+        f"({name}, {n} bp). No inverted-repeat pair was detectable. Provide "
+        "--ssc-start/--ssc-end explicitly or a GFF3/GenBank annotation carrying the "
+        "SSC feature."
+    )
+
+
+# ---------------------------------------------------------------------------
+# primary estimator: dual-reference remapping
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class RemapQuantResult:
+    fraction_a: float
+    fraction_b: float
+    sense_a: int  # reads supporting Isomer A when aligned to reference A
+    antisense_a: int  # reads supporting Isomer B when aligned to reference A
+    total_ssc_reads_a: int
+    sense_b: int  # reads supporting Isomer B when aligned to reference B
+    antisense_b: int  # reads supporting Isomer A when aligned to reference B
+    total_ssc_reads_b: int
+    agreement_delta: float  # |f_B(refA) - f_B(refB)|; small = high confidence
+    junction_buffer: int
+    min_mapq: int
+
+
+def _ssc_core_pieces(
+    ssc_start: int, ssc_end: int, n: int, junction_buffer: int
+) -> list[tuple[int, int]]:
+    """Linear pieces of the SSC interior after removing junction buffers."""
+    core_len = (ssc_end - ssc_start) % n
+    lo = ssc_start + junction_buffer
+    hi = ssc_start + core_len - junction_buffer  # may exceed n (fine)
+    if hi - lo <= 0:
+        return []
+    pieces: list[tuple[int, int]] = []
+    pos = lo
+    while pos < hi:
+        piece_end = min(((pos // n) + 1) * n, hi)
+        pieces.append((pos % n, piece_end % n or n))
+        pos = piece_end
+    return pieces
+
+
+def _count_orientations(bam_path, ref_name: str, regions, min_mapq: int) -> tuple[int, int]:
+    import pysam  # local import keeps module importable without pysam
+
+    sense = antisense = 0
+    with pysam.AlignmentFile(str(bam_path), "rb") as bam:
+        for region_start, region_end in regions:
+            for read in bam.fetch(ref_name, region_start, region_end):
+                if (
+                    read.is_unmapped
+                    or read.is_secondary
+                    or read.is_supplementary
+                    or read.is_duplicate
+                ):
+                    continue
+                if read.mapping_quality < min_mapq:
+                    continue
+                # keep only reads fully contained in the SSC core
+                if read.reference_start < region_start or read.reference_end > region_end:
+                    continue
+                if read.is_paired and not read.is_read1:
+                    continue  # count MOLECULES via first-in-pair only;
+                # every proper FR pair otherwise contributes exactly one
+                # forward and one reverse mate and cancels itself out.
+                if read.is_reverse:
+                    antisense += 1
+                else:
+                    sense += 1
+    return sense, antisense
+
+
+def quantify_isomers_by_remapping(
+    bam_a_path,
+    bam_b_path,
+    ref_name: str,
+    ref_length: int,
+    ssc_start: int,
+    ssc_end: int,
+    *,
+    junction_buffer: int = 250,
+    min_mapq: int = 20,
+) -> RemapQuantResult | None:
+    """Estimate isomer proportions from alignment orientation inside the SSC.
+
+    Against reference A: sense reads = Isomer A molecules, antisense = Isomer B.
+    Against reference B (same coordinate frame): sense = B, antisense = A.
+    Both frames must agree; their disagreement is reported as QC.
+    """
+    regions = _ssc_core_pieces(ssc_start, ssc_end, ref_length, junction_buffer)
+    if not regions:
+        return None
+
+    sense_a, antisense_a = _count_orientations(bam_a_path, ref_name, regions, min_mapq)
+    sense_b, antisense_b = _count_orientations(bam_b_path, ref_name, regions, min_mapq)
+
+    informative_a = sense_a + antisense_a
+    informative_b = sense_b + antisense_b
+    if informative_a == 0 or informative_b == 0:
+        return None
+
+    frac_b_from_a = antisense_a / informative_a
+    frac_b_from_b = sense_b / informative_b
+    frac_b = (frac_b_from_a + frac_b_from_b) / 2.0
+    return RemapQuantResult(
+        fraction_a=1.0 - frac_b,
+        fraction_b=frac_b,
+        sense_a=sense_a,
+        antisense_a=antisense_a,
+        total_ssc_reads_a=informative_a,
+        sense_b=sense_b,
+        antisense_b=antisense_b,
+        total_ssc_reads_b=informative_b,
+        agreement_delta=abs(frac_b_from_a - frac_b_from_b),
+        junction_buffer=junction_buffer,
+        min_mapq=min_mapq,
+    )
+
+
+# ---------------------------------------------------------------------------
+# secondary estimator: unique k-mer voting
+# ---------------------------------------------------------------------------
+
+
+def _build_unique_kmers(seq_a: str, seq_b: str, kmer_size: int) -> tuple[set[str], set[str]]:
+    kmers_a = {seq_a[i : i + kmer_size] for i in range(len(seq_a) - kmer_size + 1)}
+    kmers_b = {seq_b[i : i + kmer_size] for i in range(len(seq_b) - kmer_size + 1)}
+    return kmers_a - kmers_b, kmers_b - kmers_a
+
+
+def _count_hits(read: str, kmers: set[str], kmer_size: int) -> int:
+    return sum(1 for i in range(len(read) - kmer_size + 1) if read[i : i + kmer_size] in kmers)
 
 
 def quantify_isomers_from_fastq(
-    fastq_files: list[Path],
-    isomer_a: tuple[str, str],
-    isomer_b: tuple[str, str],
-    kmer_size: int,
-    min_hits: int,
-    read_limit: int,
-    assumptions: list[str],
+    fastq_files,
+    isomer_pair: IsomerPair,
+    kmer_size: int = 31,
+    min_hits: int = 2,
+    read_limit: int = 250_000,
+    assumptions: list[str] | None = None,
 ) -> IsomerQuantResult:
-    isomer_a_name, seq_a = isomer_a
-    isomer_b_name, seq_b = isomer_b
-
-    unique_a, unique_b = _build_unique_kmers(seq_a, seq_b, kmer_size)
-
-    assigned_a = 0
-    assigned_b = 0
-    ambiguous = 0
-    unassigned = 0
-    total = 0
-
-    for read_sequence in read_fastq_sequences(fastq_files, limit=read_limit):
-        total += 1
-        a_forward = _count_hits(read_sequence, unique_a, kmer_size)
-        b_forward = _count_hits(read_sequence, unique_b, kmer_size)
-        read_rc = reverse_complement(read_sequence)
-        a_reverse = _count_hits(read_rc, unique_a, kmer_size)
-        b_reverse = _count_hits(read_rc, unique_b, kmer_size)
-
-        a_hits, b_hits = _select_orientation((a_forward, b_forward), (a_reverse, b_reverse))
-
-        if a_hits < min_hits and b_hits < min_hits:
-            unassigned += 1
-            continue
-        if a_hits == b_hits:
-            ambiguous += 1
-            continue
-        if a_hits > b_hits:
-            assigned_a += 1
+    """Unique k-mer voting estimator (secondary cross-check)."""
+    unique_a, unique_b = _build_unique_kmers(
+        isomer_pair.sequence_a.upper(), isomer_pair.sequence_b.upper(), kmer_size
+    )
+    assigned_a = assigned_b = ambiguous = unassigned = seen = 0
+    for record in read_fastq_sequences(fastq_files, limit=read_limit):
+        seen += 1
+        read = record.upper()
+        hits_a_fwd = _count_hits(read, unique_a, kmer_size)
+        hits_b_fwd = _count_hits(read, unique_b, kmer_size)
+        rc_read = reverse_complement(read)
+        hits_a_rc = _count_hits(rc_read, unique_a, kmer_size)
+        hits_b_rc = _count_hits(rc_read, unique_b, kmer_size)
+        # orientation-first: read the sequence in whichever direction carries
+        # more total support, THEN compare isomers within that single frame.
+        if hits_a_rc + hits_b_rc > hits_a_fwd + hits_b_fwd:
+            hits_a, hits_b = hits_a_rc, hits_b_rc
         else:
+            hits_a, hits_b = hits_a_fwd, hits_b_fwd
+        if max(hits_a, hits_b) < min_hits:
+            unassigned += 1
+        elif hits_a > hits_b:
+            assigned_a += 1
+        elif hits_b > hits_a:
             assigned_b += 1
+        else:
+            ambiguous += 1
 
     informative = assigned_a + assigned_b
-    if informative == 0:
-        frac_a = 0.0
-        frac_b = 0.0
-    else:
-        frac_a = assigned_a / informative
-        frac_b = assigned_b / informative
+    fraction_a = assigned_a / informative if informative else 0.0
+    fraction_b = assigned_b / informative if informative else 0.0
 
+    notes = list(assumptions or [])
+    notes.append(
+        "K-mer voting uses unique k-mers (symmetric difference) at "
+        f"k={kmer_size}; orientation-aware."
+    )
     return IsomerQuantResult(
-        isomer_a_name=isomer_a_name,
-        isomer_b_name=isomer_b_name,
+        isomer_a_name=isomer_pair.name_a,
+        isomer_b_name=isomer_pair.name_b,
         assigned_a=assigned_a,
         assigned_b=assigned_b,
         ambiguous=ambiguous,
         unassigned=unassigned,
-        total_reads_seen=total,
-        isomer_a_fraction=frac_a,
-        isomer_b_fraction=frac_b,
+        total_reads_seen=seen,
+        isomer_a_fraction=round(fraction_a, 6),
+        isomer_b_fraction=round(fraction_b, 6),
         method="unique_kmer_voting",
-        assumptions=assumptions,
+        assumptions=notes,
     )
 
 
-def write_isomer_gfa(path: Path, isomer_result: IsomerQuantResult) -> None:
+def write_isomer_gfa(
+    path,
+    isomer_pair: IsomerPair,
+    quant_result: IsomerQuantResult | None,
+) -> None:
+    """Write a GFA2-style graph with REAL segment sequences.
+
+    Segments carry the actual isomer sequences (renderable by Bandage/odgi);
+    RC:i holds assigned-read counts and PR:f the proportion custom tags.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        if isomer_result.method == "assembly_only_candidates":
-            handle.write("H\tVN:Z:1.0\tCL:Z:assembly_only_candidates\n")
-            handle.write(f"S\t{isomer_result.isomer_a_name}\t*\n")
-            handle.write(f"S\t{isomer_result.isomer_b_name}\t*\n")
-        else:
-            a_pct = round(isomer_result.isomer_a_fraction * 100.0, 4)
-            b_pct = round(isomer_result.isomer_b_fraction * 100.0, 4)
-            handle.write("H\tVN:Z:1.0\n")
-            handle.write(
-                f"S\t{isomer_result.isomer_a_name}\t*\tRC:i:{isomer_result.assigned_a}\tPR:f:{a_pct}\n"
+
+    def _segment_line(seg_name: str, sequence: str, reads: int, proportion: float) -> str:
+        return f"S\t{seg_name}\t{sequence}\tRC:i:{reads}\tPR:f:{proportion:.6f}\n"
+
+    lines = ["H\tVN:Z:2.0\n"]
+    if quant_result is not None:
+        lines.append(
+            _segment_line(
+                isomer_pair.name_a,
+                isomer_pair.sequence_a,
+                quant_result.assigned_a,
+                quant_result.isomer_a_fraction,
             )
-            handle.write(
-                f"S\t{isomer_result.isomer_b_name}\t*\tRC:i:{isomer_result.assigned_b}\tPR:f:{b_pct}\n"
+        )
+        lines.append(
+            _segment_line(
+                isomer_pair.name_b,
+                isomer_pair.sequence_b,
+                quant_result.assigned_b,
+                quant_result.isomer_b_fraction,
             )
-        handle.write(
-            f"L\t{isomer_result.isomer_a_name}\t+\t{isomer_result.isomer_b_name}\t+\t0M\n"
         )
-        handle.write(
-            f"L\t{isomer_result.isomer_b_name}\t+\t{isomer_result.isomer_a_name}\t+\t0M\n"
-        )
-        handle.write(
-            f"P\tIsomerPath\t{isomer_result.isomer_a_name}+,{isomer_result.isomer_b_name}+\t*\n"
-        )
-
-
-def _invert_segment(sequence: str, start: int, end: int) -> str:
-    return sequence[:start] + reverse_complement(sequence[start:end]) + sequence[end:]
-
-
-def _build_unique_kmers(seq_a: str, seq_b: str, kmer_size: int) -> tuple[set[str], set[str]]:
-    kmers_a = _kmers(seq_a, kmer_size)
-    kmers_b = _kmers(seq_b, kmer_size)
-    unique_a = kmers_a - kmers_b
-    unique_b = kmers_b - kmers_a
-    return unique_a, unique_b
-
-
-def _kmers(sequence: str, kmer_size: int) -> set[str]:
-    if kmer_size <= 0:
-        raise ValueError("kmer_size must be > 0")
-    if len(sequence) < kmer_size:
-        return set()
-    out: set[str] = set()
-    for index in range(0, len(sequence) - kmer_size + 1):
-        kmer = sequence[index : index + kmer_size]
-        if "N" in kmer:
-            continue
-        out.add(kmer)
-    return out
-
-
-def _count_hits(sequence: str, kmer_set: set[str], kmer_size: int) -> int:
-    if len(sequence) < kmer_size or not kmer_set:
-        return 0
-    hits = 0
-    for index in range(0, len(sequence) - kmer_size + 1):
-        if sequence[index : index + kmer_size] in kmer_set:
-            hits += 1
-    return hits
-
-
-def _select_orientation(forward: tuple[int, int], reverse: tuple[int, int]) -> tuple[int, int]:
-    f_a, f_b = forward
-    r_a, r_b = reverse
-    f_margin = abs(f_a - f_b)
-    r_margin = abs(r_a - r_b)
-    if r_margin > f_margin:
-        return reverse
-    if f_margin > r_margin:
-        return forward
-    if (r_a + r_b) > (f_a + f_b):
-        return reverse
-    return forward
+        lines.append(f"L\t{isomer_pair.name_a}\t+\t{isomer_pair.name_b}\t-\t*\n")
+    else:
+        lines.append(_segment_line(isomer_pair.name_a, isomer_pair.sequence_a, 0, float("nan")))
+        lines.append(_segment_line(isomer_pair.name_b, isomer_pair.sequence_b, 0, float("nan")))
+    path.write_text("".join(lines))
