@@ -25,7 +25,8 @@ def run_mapping(
         _require_tools(["bwa", "samtools"])
         _build_bwa_index(fasta_path)
         temp_sam = output_bam.with_suffix(".tmp.sam")
-        command = ["bwa", "mem", "-t", str(threads), str(fasta_path)] + [str(p) for p in fastq_files]
+        fastq_args = [str(p) for p in fastq_files]
+        command = ["bwa", "mem", "-t", str(threads), str(fasta_path), *fastq_args]
         _run_to_file(command, temp_sam)
         run_command(["samtools", "sort", "-@", str(threads), "-o", str(output_bam), str(temp_sam)])
         temp_sam.unlink(missing_ok=True)
