@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# OS
+.DS_Store
+
+# Generated analysis outputs (regenerate by running helios)
+runs/
+
+# Graphify knowledge graph (regenerate via: graphify extract . --code-only)
+graphify-out/
